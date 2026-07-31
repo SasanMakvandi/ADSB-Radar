@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<title>Home Radar</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.css" />
+<style>
+  html, body { margin: 0; height: 100%; background: #0b0e14; }
+  #map { height: 100%; }
+  .plane-icon { font-size: 20px; text-shadow: 0 0 3px #000; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.js"></script>
+<script>
+  const HOME = { lat: 43.8828, lon: -79.4403 }; // match your server's HOME values
+
+const map = L.map("map").setView([HOME.lat, HOME.lon], 9);
+
+L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+  attribution: '&copy; OpenStreetMap &copy; CARTO',
+}).addTo(map);
+
+L.marker([HOME.lat, HOME.lon], {
+  icon: L.divIcon({ className: "", html: "🏠", iconSize: [24, 24] }),
+}).addTo(map).bindPopup("Home");
+
+const markers = new Map(); // icao24 -> Leaflet marker, so we can update instead of re-creating
+
+function planeIcon(heading) {
+  return L.divIcon({
+    className: "plane-icon",
+    html: `<div style="transform: rotate(${heading}deg)">✈️</div>`,
+    iconSize: [20, 20],
+    iconAnchor: [10, 10],
+  });
+}
+
+async function refresh() {
+  const res = await fetch("/api/aircraft");
+  const { aircraft } = await res.json();
+  const seenIds = new Set();
+
+  for (const ac of aircraft) {
+    seenIds.add(ac.icao24);
+    const heading = ac.heading || 0;
+    const popupHtml = `<b>${ac.callsign || ac.icao24}</b><br/>
+      Alt: ${ac.altitudeFt ?? "—"} ft<br/>
+      Speed: ${ac.groundSpeedKt ?? "—"} kt`;
+
+    if (markers.has(ac.icao24)) {
+      const m = markers.get(ac.icao24);
+      m.setLatLng([ac.latitude, ac.longitude]);
+      m.setIcon(planeIcon(heading));
+      m.getPopup().setContent(popupHtml);
+    } else {
+      const m = L.marker([ac.latitude, ac.longitude], { icon: planeIcon(heading) })
+        .addTo(map).bindPopup(popupHtml);
+      markers.set(ac.icao24, m);
+    }
+  }
+
+  for (const [id, marker] of markers) {
+    if (!seenIds.has(id)) {
+      map.removeLayer(marker);
+      markers.delete(id);
+    }
+  }
+}
+
+refresh();
+setInterval(refresh, 5_000); // adsb.fi allows 1 req/sec, so 5s is comfortably safe
+</script>
+</body>
+</html>
